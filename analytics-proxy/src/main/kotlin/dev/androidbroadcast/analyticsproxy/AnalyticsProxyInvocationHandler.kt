@@ -3,7 +3,16 @@ package dev.androidbroadcast.analyticsproxy
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 
-internal class AnalyticsProxyInvocationHandler(
+@Suppress("FunctionName")
+internal fun AnalyticsProxyInvocationHandler(
+    analyticsTracker: AnalyticsTracker,
+    cached: Boolean = true
+): InvocationHandler = when {
+    cached -> AnalyticsProxyInvocationHandlerWithCache(analyticsTracker)
+    else -> AnalyticsProxyInvocationHandler(analyticsTracker)
+}
+
+private class AnalyticsProxyInvocationHandlerWithCache(
     private val analyticsTracker: AnalyticsTracker
 ) : InvocationHandler {
 
@@ -48,21 +57,39 @@ internal class AnalyticsProxyInvocationHandler(
     }
 }
 
+private class AnalyticsProxyInvocationHandler(
+    private val analyticsTracker: AnalyticsTracker
+) : InvocationHandler {
+
+    override fun invoke(proxy: Any, method: Method, args: Array<out Any>?): Any {
+        val annotations = method.declaredAnnotations
+        checkFunAnnotations(annotations)
+        val eventName = annotations.firstNotNullOf { it as? EventName }.value
+
+        if (args.isNullOrEmpty()) {
+            analyticsTracker.trackEvent(eventName, params = null)
+        } else {
+            val eventArgs: Map<String, Any> = buildMap {
+                repeat(method.parameterCount) { index ->
+                    val analyticsParamName = checkParamAnnotations(method.parameterAnnotations[index])
+                        .firstNotNullOf { it as? Param }
+                        .value
+                    this[analyticsParamName] = args[index]
+                }
+            }
+            analyticsTracker.trackEvent(eventName, eventArgs)
+        }
+        return Unit
+    }
+}
+
 private fun checkFunAnnotations(annotations: Array<Annotation>?) {
     if (annotations.isNullOrEmpty()) error("No annotations")
     if (annotations.none { it is EventName }) error("No EventName annotation")
 }
 
-private fun checkParamAnnotations(annotations: Array<Annotation>?) {
+private fun checkParamAnnotations(annotations: Array<Annotation>?): Array<Annotation> {
     if (annotations.isNullOrEmpty()) error("No annotations")
     if (annotations.none { it is Param }) error("No Param annotation")
-}
-
-private fun <K, V> Array<K>.associateWithIndexed(valueSelector: (Int, K) -> V): Map<K, V> {
-    var i = 0
-    return associateWith { key ->
-        val value = valueSelector(i, key)
-        i++
-        value
-    }
+    return annotations
 }
